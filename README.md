@@ -211,3 +211,129 @@ The following results come from running all four implementations against a ~250 
   - `s3://{bucket}/xlsx_poc/SpreadCheetahUploadService.xlsx`
     - Size: ~57.5 MB
     - Elapsed time: ~00:00:57
+
+---
+
+## Load Test (Benchmark)
+
+The `XlsxStreamUploaderLoadTest` project uses **BenchmarkDotNet** to measure performance and memory allocations of different XLSX writing strategies.
+
+### How to run
+
+```bash
+# Quick validation test (Debug mode, ~30 seconds)
+make loadtest-quick
+
+# Full benchmark (Release mode, ~5 minutes)
+make loadtest
+```
+
+### What is tested
+
+The benchmark isolates **XLSX generation performance** by:
+- Using a `NullStream` that discards all written bytes (no disk I/O)
+- Generating deterministic CSV data in memory (no S3 dependency)
+- Measuring only the XLSX writing time and memory allocations
+
+### Writers tested
+
+| Writer | Description |
+|--------|-------------|
+| **LargeXlsx_Write** | LargeXlsx library with default settings |
+| **LargeXlsx_NoCellRefs** | LargeXlsx with cell references disabled |
+| **SpreadCheetah_Write** | SpreadCheetah with `List<Cell>` per row |
+| **SpreadCheetah_ReusableArray** | SpreadCheetah with reusable `Cell[]` array |
+| **SpreadCheetah_DataCell** | SpreadCheetah with reusable `DataCell[]` (struct) |
+| **SpreadCheetah_Buffered** | SpreadCheetah with 4MB buffer + reusable `DataCell[]` |
+| **MiniExcel_Write** | MiniExcel with `Dictionary` per row |
+| **ManualOpenXml_Write** | Manual ZipArchive + XmlWriter (no library) |
+
+### Test scenarios
+
+| RowCount | ColumnCount | Description |
+|----------|-------------|-------------|
+| 10,000 | 10 | Small dataset |
+| 10,000 | 50 | Small dataset, wide rows |
+| 100,000 | 10 | Large dataset |
+| 100,000 | 50 | Large dataset, wide rows |
+
+### Benchmark results
+
+Environment:
+- Ubuntu 22.04.5 LTS
+- 12th Gen Intel Core i7-1265U, 12 logical cores
+- .NET 8.0.21, X64 RyuJIT AVX2
+
+#### Summary (100K rows × 50 columns - heaviest scenario)
+
+| Writer | Time | vs Baseline | Memory | Alloc Ratio |
+|--------|------|-------------|--------|-------------|
+| LargeXlsx_Write | 1,256 ms | - | 736 MB | 1.00 |
+| **SpreadCheetah_DataCell** | **957 ms** | **24% faster** | **736 MB** | **1.00** |
+| **SpreadCheetah_Buffered** | **961 ms** | **24% faster** | **736 MB** | **1.00** |
+| SpreadCheetah_ReusableArray | 1,018 ms | 19% faster | 736 MB | 1.00 |
+| SpreadCheetah_Write | 1,037 ms | 17% faster | 970 MB | 1.32 |
+| LargeXlsx_NoCellRefs | 1,212 ms | 4% faster | 736 MB | 1.00 |
+| MiniExcel_Write | 3,147 ms | 2.5x slower | 3,340 MB | 4.54 |
+| ManualOpenXml_Write | 3,222 ms | 2.6x slower | 1,170 MB | 1.59 |
+
+#### Full results
+
+| Method | RowCount | ColumnCount | Mean | Allocated | Alloc Ratio |
+|--------|----------|-------------|------|-----------|-------------|
+| LargeXlsx_Write | 10000 | 10 | 25.02 ms | 13.89 MB | 1.00 |
+| LargeXlsx_NoCellRefs | 10000 | 10 | 19.74 ms | 13.89 MB | 1.00 |
+| SpreadCheetah_Write | 10000 | 10 | 20.81 ms | 18.91 MB | 1.36 |
+| SpreadCheetah_ReusableArray | 10000 | 10 | 21.73 ms | 13.8 MB | 0.99 |
+| SpreadCheetah_DataCell | 10000 | 10 | 20.97 ms | 13.8 MB | 0.99 |
+| SpreadCheetah_Buffered | 10000 | 10 | 21.40 ms | 13.8 MB | 0.99 |
+| MiniExcel_Write | 10000 | 10 | 68.93 ms | 78.84 MB | 5.67 |
+| ManualOpenXml_Write | 10000 | 10 | 62.97 ms | 19.51 MB | 1.40 |
+| | | | | | |
+| LargeXlsx_Write | 10000 | 50 | 128.16 ms | 67.22 MB | 1.00 |
+| LargeXlsx_NoCellRefs | 10000 | 50 | 112.03 ms | 67.22 MB | 1.00 |
+| SpreadCheetah_Write | 10000 | 50 | 113.29 ms | 90.55 MB | 1.35 |
+| SpreadCheetah_ReusableArray | 10000 | 50 | 97.64 ms | 67.15 MB | 1.00 |
+| SpreadCheetah_DataCell | 10000 | 50 | 99.47 ms | 67.13 MB | 1.00 |
+| SpreadCheetah_Buffered | 10000 | 50 | 106.28 ms | 67.13 MB | 1.00 |
+| MiniExcel_Write | 10000 | 50 | 322.92 ms | 333.62 MB | 4.96 |
+| ManualOpenXml_Write | 10000 | 50 | 353.74 ms | 108.67 MB | 1.62 |
+| | | | | | |
+| LargeXlsx_Write | 100000 | 10 | 255.56 ms | 140.24 MB | 1.00 |
+| LargeXlsx_NoCellRefs | 100000 | 10 | 209.05 ms | 140.24 MB | 1.00 |
+| SpreadCheetah_Write | 100000 | 10 | 248.22 ms | 191.26 MB | 1.36 |
+| SpreadCheetah_ReusableArray | 100000 | 10 | 211.43 ms | 140.14 MB | 1.00 |
+| SpreadCheetah_DataCell | 100000 | 10 | 196.90 ms | 140.14 MB | 1.00 |
+| SpreadCheetah_Buffered | 100000 | 10 | 199.07 ms | 140.15 MB | 1.00 |
+| MiniExcel_Write | 100000 | 10 | 607.76 ms | 669.4 MB | 4.77 |
+| ManualOpenXml_Write | 100000 | 10 | 635.05 ms | 203.53 MB | 1.45 |
+| | | | | | |
+| LargeXlsx_Write | 100000 | 50 | 1,256.21 ms | 736.01 MB | 1.00 |
+| LargeXlsx_NoCellRefs | 100000 | 50 | 1,211.81 ms | 736.01 MB | 1.00 |
+| SpreadCheetah_Write | 100000 | 50 | 1,036.68 ms | 970.22 MB | 1.32 |
+| SpreadCheetah_ReusableArray | 100000 | 50 | 1,017.92 ms | 735.92 MB | 1.00 |
+| SpreadCheetah_DataCell | 100000 | 50 | 957.22 ms | 735.92 MB | 1.00 |
+| SpreadCheetah_Buffered | 100000 | 50 | 960.51 ms | 735.92 MB | 1.00 |
+| MiniExcel_Write | 100000 | 50 | 3,147.13 ms | 3340.02 MB | 4.54 |
+| ManualOpenXml_Write | 100000 | 50 | 3,221.53 ms | 1170.22 MB | 1.59 |
+
+### Conclusion
+
+**Recommended: SpreadCheetah with `DataCell[]` reusable array**
+
+- **24% faster** than LargeXlsx
+- **Same memory allocation** as LargeXlsx
+- Async-friendly API
+
+```csharp
+var cellBuffer = new DataCell[columnCount];
+
+foreach (var line in csvLines)
+{
+    var columns = ParseLine(line);
+    for (int i = 0; i < columns.Length; i++)
+        cellBuffer[i] = new DataCell(columns[i]);
+    
+    await spreadsheet.AddRowAsync(cellBuffer.AsMemory(0, columns.Length));
+}
+```
